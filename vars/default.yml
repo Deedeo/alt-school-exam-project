@@ -1,0 +1,37 @@
+
+# Name of User to be Created on the Remote server
+user: altschool
+
+# User Password
+password: abcde12345
+
+# Public Key to copy to Remote Server
+public_key: ~/.ssh/id_rsa.pub
+
+# email linked to cerbot registration
+email: daradeo4u@gmail.com
+
+
+
+
+# Name of the laravel repo
+app_name: lavarelapp
+
+# path to the laravel app document
+# server_document_root: {{ /var/www/html/ }}
+
+# Link to your git repository of your site
+repo_url: https://github.com/f1amy/laravel-realworld-example-app.git
+
+
+# mySQL Setup
+mysql_app_db: laraveldb
+mysql_app_user: laravel
+mysql_app_pass: 1234567890
+mysql_root_password: 0987654321
+
+
+servername: deebudapest.me 
+serveralias: www.deebudapest.me
+
+certbot_plugin: apache

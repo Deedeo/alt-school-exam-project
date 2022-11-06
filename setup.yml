@@ -1,0 +1,260 @@
+---
+- hosts: all
+  become: true
+  become_user: root
+  vars_files:
+    - ../vars/default.yml
+
+  tasks:
+    - name: Upgrade System
+      apt:
+       upgrade: dist
+       force_apt_get: yes 
+       update_cache: yes
+    
+
+    - name: Set timezone to Africa/Lagos
+      community.general.timezone:
+        name: Africa/Lagos
+        hwclock: UTC
+
+    - name: Install UFW Firewall
+      apt:
+       name: ufw
+       state: latest
+    
+    - name: Allow access to Openssh, Http and https
+      community.general.ufw:
+        rule: allow
+        proto: tcp
+        port: "{{ item }}"
+      loop:
+        - '80'
+        - '22'
+        - '443'
+        - '3306'
+        - '5432'
+    
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+        policy: allow    
+    
+    - name: Install Software-propteries
+      ansible.builtin.command: 
+        cmd: sudo apt install software-properties-common ca-certificates lsb-release apt-transport-https -y   
+
+    - name: Add php repository
+      ansible.builtin.command:
+        cmd: sudo add-apt-repository ppa:ondrej/php -y
+ 
+    - name: Add certbot repository
+      ansible.builtin.command:
+        cmd: sudo add-apt-repository ppa:certbot/certbot -y
+
+
+    - name: Upgrade System
+      apt:
+       upgrade: dist
+       force_apt_get: yes 
+       update_cache: yes
+    
+    - name: Install certbot's Apache package
+      apt:
+        name: python3-certbot-apache
+        state: present
+        update_cache: yes
+      become: true
+
+    - name: Install Software-propteries
+      ansible.builtin.command:
+        cmd: sudo apt install libapache2-mod-php -y
+ 
+    - name: Install PHP dependencies
+      apt: name={{ item }} state=latest force_apt_get=yes update_cache=yes
+      loop: [ 'php8.1','php8.1-zip','php8.1-dev', 'php8.1-zip', 'php8.1-curl', 'php8.1-mbstring', 'php8.1-pgsql', 'php8.1-mysql', 'php8.1-xml', 'php8.1-gd','php8.1-intl' ]
+
+    - name: Install unzip
+      apt: name=unzip state=latest
+
+    - name: Install MariaDB & mysql-python prerequisites
+      apt: name={{ item }} update_cache=yes state=latest
+      loop: [ 'mariadb-server', 'python3-pymysql', 'python3-mysqldb', 'python3', 'python3-dev', 'libmysqlclient-dev', 'python3-pip', ]
+
+    # MariaDB Configuration
+    - name: Sets the root password
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Removes all anonymous user accounts
+      mysql_user:
+        name: ''
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        host_all: yes
+        state: absent
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      #no_log: true
+
+    - name: Removes the MySQL test database
+      mysql_db:
+        name: test
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        state: absent
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      
+   
+    - name: Creates App Database
+      mysql_db:
+        name: "{{ mysql_app_db }}"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      
+    - name: Create App MySQL user and grants access to App DB
+      mysql_user:
+        name: "{{ mysql_app_user }}"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        password: "{{ mysql_app_pass }}"
+        priv: "{{ mysql_app_db }}.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Download php-composer
+      get_url:
+        url: https://getcomposer.org/installer
+        dest: /tmp/installer
+
+    - name: install composer
+      shell: cat /tmp/installer | php -- --install-dir=/usr/local/bin
+      args:
+        creates: /usr/local/bin/composer
+
+    - name: rename composer.phar to composer
+      shell: mv /usr/local/bin/composer.phar /usr/local/bin/composer
+      args:
+        creates: /usr/local/bin/composer
+
+    - name: make composer executable
+      file: 
+        path: /usr/local/bin/composer
+        mode: +x
+        state: file
+
+    - name: install apache2 server
+      apt:
+        name: apache2
+        state: present
+
+    - name: install git
+      apt:
+        name: git
+        state: present
+
+    - name: checkout latest code from github
+      git: >
+        repo={{ repo_url }}
+        dest=/var/www/html/{{ app_name }}
+        force=yes
+        accept_hostkey=yes
+
+    - name: Copy .env.example to .env file
+      shell: sudo mv /var/www/html/{{ app_name }}/.env.example /var/www/html/{{ app_name }}/.env
+
+    - name: Configure .env file
+      template: src=template/.env.j2 dest=/var/www/html/{{ app_name }}/.env
+
+    - name: Change permission
+      shell: chmod -R 755 /var/www/html/{{ app_name }}
+
+    - name: Change permission
+      shell: sudo chown -R :www-data /var/www/html/{{ app_name }}/
+
+    - name: Change permission
+      shell: sudo chmod -R 775 /var/www/html/{{ app_name }}/storage
+
+    - name: Install Laravel dependencies
+      shell: composer install --no-interaction
+      args:
+        chdir: "/var/www/html/{{ app_name }}"
+        
+    - name: Add certbot to websever
+      ansible.builtin.command:
+        cmd: sudo certbot --{{ certbot_plugin }} -- agree-tos --redirect -m {{ email }} -d {{ servername }}
+  
+    - name: php artisan 
+      shell: php artisan 
+      args:
+        chdir: "/var/www/html/{{ app_name }}"
+
+    - name: php artisan key
+      shell: php artisan key:generate
+      args:
+        chdir: "/var/www/html/{{ app_name }}"
+
+    - name: php artisan migrate
+      shell: php artisan migrate
+      args:
+        chdir: "/var/www/html/{{ app_name }}"
+     
+    - name: php artisan migrate fresh
+      shell: php artisan migrate:fresh
+      args:
+        chdir: "/var/www/html/{{ app_name }}"
+
+    - name: php artisan migrate seed
+      shell: php artisan migrate --seed
+      args:
+        chdir: "/var/www/html/{{ app_name }}"
+
+    - name: Uncomment the web.php
+      template: src=template/web.php dest=/var/www/html/{{ app_name }}/routes
+
+    - name: Create apache vhosts for  domain
+      template: src=template/laravel.conf.j2 dest="/etc/apache2/sites-available/{{ app_name }}.conf" owner=www-data group=www-data mode=0644
+
+    - name: Update a2ensite
+      command: a2ensite {{ app_name }}
+
+    - name: Disable Apache defualt site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      notify: Restart Apache
+
+    - name: Enable the Apache rewrite module
+      command:  a2enmod rewrite
+    
+    - name: Add a new user
+      user:
+        name: "{{ user }}"
+        password: "{{ password }}"
+        groups: sudo
+        append: yes
+        state: present
+        shell: /bin/bash
+      become: true
+  handlers:
+    - name: Restart Apache
+      service:
+        name=apache2
+        state=restarted
+
+
+    - name: Create altschool directory
+      ansible.builtin.file:
+        path: /root/database
+        state: directory
+
+    - name: copy script file to the remote node
+      ansible.builtin.copy:
+        src: template/posgresql.sh
+        dest: /root/database
+        owner: root
+        mode: '0755'
+
+    - name: Run posgresql bash script in remote node
+      command: ./posgresql.sh
